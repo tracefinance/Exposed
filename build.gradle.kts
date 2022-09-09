@@ -1,23 +1,36 @@
 import io.gitlab.arturbosch.detekt.Detekt
 import io.gitlab.arturbosch.detekt.report.ReportMergeTask
 import org.jetbrains.kotlin.gradle.tasks.KotlinJvmCompile
+import java.net.URI
+import java.time.LocalDateTime
+
+val artifactoryUrl: String? by project
+val artifactoryRepository: String? by project
+val artifactoryUsername: String? by project
+val artifactoryApiKey: String? by project
 
 plugins {
+    `maven-publish`
     kotlin("jvm") apply true
-    id("io.github.gradle-nexus.publish-plugin") apply true
+    id("com.jfrog.artifactory") version "4.28.0" apply true
     id("io.gitlab.arturbosch.detekt")
+}
+
+val reportMerge by tasks.registering(ReportMergeTask::class) {
+    output.set(rootProject.buildDir.resolve("reports/detekt/exposed.xml"))
 }
 
 allprojects {
     apply(from = rootProject.file("buildScripts/gradle/checkstyle.gradle.kts"))
 
-    if (this.name != "exposed-tests" && this.name != "exposed-bom" && this != rootProject) {
-        apply(from = rootProject.file("buildScripts/gradle/publishing.gradle.kts"))
-    }
-}
+    if (this != rootProject && this.name != "exposed-tests") {
+        apply(plugin = "maven-publish")
+        apply(plugin = "com.jfrog.artifactory")
 
-val reportMerge by tasks.registering(ReportMergeTask::class) {
-    output.set(rootProject.buildDir.resolve("reports/detekt/exposed.xml"))
+        if (this.name != "exposed-bom") {
+            apply(from = rootProject.file("buildScripts/gradle/publishing.gradle.kts"))
+        }
+    }
 }
 
 subprojects {
@@ -27,6 +40,7 @@ subprojects {
             input.from(this@detekt.xmlReportFile)
         }
     }
+
     tasks.withType<KotlinJvmCompile>().configureEach {
         kotlinOptions {
             jvmTarget = "1.8"
@@ -36,12 +50,21 @@ subprojects {
     }
 }
 
-nexusPublishing {
-    repositories {
-        sonatype {
-            username.set(System.getenv("exposed.sonatype.user"))
-            password.set(System.getenv("exposed.sonatype.password"))
-            useStaging.set(true)
+artifactory {
+    clientConfig.isIncludeEnvVars = true
+    clientConfig.info.addEnvironmentProperty("createdAt", LocalDateTime.now().toString())
+
+    setContextUrl(artifactoryUrl)
+
+    publish {
+        repository {
+            setRepoKey(artifactoryRepository)
+            setUsername(artifactoryUsername)
+            setPassword(artifactoryApiKey)
+        }
+
+        defaults {
+            publications("ExposedJars", "bom")
         }
     }
 }
@@ -49,4 +72,11 @@ nexusPublishing {
 repositories {
     mavenLocal()
     mavenCentral()
+    maven {
+        url = URI("$artifactoryUrl/$artifactoryRepository")
+        credentials {
+            this.username = artifactoryUsername
+            this.password = artifactoryApiKey
+        }
+    }
 }
